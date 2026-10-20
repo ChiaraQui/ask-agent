@@ -1,7 +1,7 @@
 [project]
-name = "adk-multi-agent-systems"
+name = "ask-agent"
 version = "0.1.0"
-description = "Multi-agent AI systems with Google ADK — routing, MCP, and A2A demos"
+description = "A Google ADK agent that answers company policy questions from my ask-rag retrieval service, with citations"
 requires-python = ">=3.12"
 
 dependencies = [
