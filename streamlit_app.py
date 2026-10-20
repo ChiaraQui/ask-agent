@@ -178,6 +178,17 @@ def check_shipping_agent(url="http://localhost:8001"):
     except Exception:
         return False
 
+def check_ask_api(url=None):
+    """Is the Session 2 RAG service reachable? Render free tier cold-starts,
+    so a timeout here means 'asleep', not 'broken'."""
+    import urllib.request
+    url = (url or os.getenv("ASK_API_URL", "https://your-service.onrender.com")).rstrip("/")
+    try:
+        with urllib.request.urlopen(f"{url}/", timeout=5) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
 def render_trace(trace):
     if not trace:
         return
@@ -207,13 +218,15 @@ api_key = os.getenv("GOOGLE_API_KEY")
 supa_token = os.getenv("SUPABASE_ACCESS_TOKEN")
 supa_ref = os.getenv("SUPABASE_PROJECT_REF")
 shipping_ok = check_shipping_agent()
+ask_api_url = os.getenv("ASK_API_URL", "https://your-service.onrender.com").rstrip("/")
+ask_api_ok = check_ask_api(ask_api_url)
 
 # --- Sidebar ---
 
 with st.sidebar:
     st.title("ADK Multi-Agent Systems")
     st.caption("Interactive Classroom Demo")
-    page = st.radio("Navigate", ["Overview", "Demo 1: Routing", "Demo 2: MCP + Database", "Demo 3: Full System"], label_visibility="collapsed")
+    page = st.radio("Navigate", ["Overview", "Policy Agent (my build)", "Demo 1: Routing", "Demo 2: MCP + Database", "Demo 3: Full System"], label_visibility="collapsed")
     st.markdown("---")
     st.markdown("### Status")
     if api_key:
@@ -224,6 +237,10 @@ with st.sidebar:
         st.success("Supabase")
     else:
         st.warning("Supabase -- not configured")
+    if ask_api_ok:
+        st.success("ask-api RAG service")
+    else:
+        st.warning("ask-api -- asleep or unreachable")
     if shipping_ok:
         st.success("Shipping Agent (:8001)")
     else:
@@ -304,6 +321,126 @@ if page == "Overview":
         "| Fragile | Swap or update agents independently |\n"
         "| Can't scale | Add specialists without rewriting |"
     )
+
+# --- Policy Agent (Session 3 build) ---
+
+elif page == "Policy Agent (my build)":
+    # Run through policy_agent.ask() rather than this file's run_agent_sync:
+    # ask() carries the step cap and the fail-closed handling, and its trace is
+    # already labelled THINK / ACT / OBSERVE / STOP.
+    from policy_agent import policy_agent, ask as policy_ask, MAX_LLM_CALLS
+
+    def run_policy_agent(message, timeout=180):
+        """ask() is async; Streamlit is not. Same thread-pool trick as
+        run_agent_sync above. Returns (answer, trace, stopped)."""
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            return pool.submit(
+                asyncio.run, policy_ask(policy_agent, message, verbose=False)
+            ).result(timeout=timeout)
+
+    def render_tao(trace):
+        """Render the Think / Act / Observe trace with its phases labelled."""
+        if not trace:
+            st.caption("No steps recorded.")
+            return
+        for step in trace:
+            n, phase = step.get("step"), step.get("phase")
+            if phase == "ACT":
+                args = ", ".join(f"{k}={v!r}" for k, v in step.get("args", {}).items())
+                st.warning(f"**{n}. ACT** — called `{step['tool']}`({args[:300]})")
+            elif phase == "OBSERVE":
+                st.success(f"**{n}. OBSERVE** — `{step['tool']}` returned:")
+                st.code(step.get("result", "")[:700], language="json")
+            elif phase == "THINK":
+                st.info(f"**{n}. THINK** — {step.get('text', '').strip()[:400]}")
+            elif phase == "STOP":
+                st.error(
+                    f"**{n}. STOP** — hit the {step.get('cap')}-step cap. "
+                    "Failed closed: no answer returned."
+                )
+            elif phase == "ANSWER":
+                st.caption(f"{n}. ANSWER produced")
+
+    st.header("Policy Agent -- ADK over my Session 2 RAG service")
+    st.markdown(
+        "When an employee asks a policy question, the agent answers with document "
+        "citations -- or opens a ticket when the docs don't cover it -- using the "
+        "live `ask-api` retrieval endpoint as its tool."
+    )
+
+    with st.expander("Why this is an agent, not a workflow", expanded=False):
+        st.markdown(
+            "The number of searches is not fixed. The agent reads the retrieved "
+            "passages and their scores, judges whether they answer the question, "
+            "and then **answers**, **re-queries with different wording**, or "
+            "**escalates**. That branch depends on a tool result, so it cannot be "
+            "hard-coded. A fixed search-then-answer chain would be a workflow."
+        )
+        st.code(
+            f"""
+    policy_agent
+      |--- search_policy_docs   -> GET {ask_api_url}/debug/retrieve
+      |                            (Pinecone retrieval over 6 Northwind docs)
+      |--- create_support_ticket -> escalate when the docs don't cover it
+            """,
+            language=None,
+        )
+
+    if not api_key:
+        st.error("Set GOOGLE_API_KEY in .env"); st.stop()
+    if not ask_api_ok:
+        st.warning(
+            f"{ask_api_url} did not respond within 5s. On Render's free tier the "
+            "first request wakes the service and can take ~50s -- the agent's own "
+            "call has a 90s timeout, so it will usually still work."
+        )
+
+    st.markdown("---")
+    col1, col2, col3 = st.columns(3)
+    query = None
+    with col1:
+        if st.button("Answerable", use_container_width=True):
+            query = "How many days a week can I work from home?"
+    with col2:
+        if st.button("Needs rephrasing", use_container_width=True):
+            query = "What do I get back if I drive my own car to a client?"
+    with col3:
+        if st.button("Not in the docs", use_container_width=True):
+            query = "What is the company policy on pet insurance?"
+    custom = st.text_input("Or ask your own policy question:", placeholder="e.g. Can I expense a first class train ticket?")
+    if st.button("Send", type="primary", key="pa_send") and custom.strip():
+        query = custom.strip()
+
+    if query:
+        with st.spinner("Searching policy docs... (Render free tier may need ~50s to wake)"):
+            try:
+                response, trace, stopped = run_policy_agent(query)
+                st.session_state["pa_resp"] = response
+                st.session_state["pa_trace"] = trace
+                st.session_state["pa_q"] = query
+                st.session_state["pa_stopped"] = stopped
+            except Exception as e:
+                # Gemini 503s are common on the free tier -- say so plainly
+                # rather than showing a raw traceback during a demo.
+                msg = str(e)
+                if "503" in msg or "UNAVAILABLE" in msg:
+                    st.error(
+                        "Gemini returned 503 (high demand). This is Google's "
+                        "side, not the agent — try again in a minute."
+                    )
+                else:
+                    st.error(msg)
+
+    if st.session_state.get("pa_resp"):
+        st.markdown("---")
+        st.markdown(f"**Query:** {st.session_state.get('pa_q', '')}")
+        with st.expander("Think -> Act -> Observe", expanded=True):
+            render_tao(st.session_state.get("pa_trace", []))
+        st.subheader("Final answer")
+        if st.session_state.get("pa_stopped"):
+            st.error(st.session_state["pa_resp"])
+        else:
+            st.markdown(st.session_state["pa_resp"])
 
 # --- Demo 1 ---
 

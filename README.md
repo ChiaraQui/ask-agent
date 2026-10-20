@@ -1,115 +1,103 @@
-# ADK Multi-Agent Systems
+# ask-agent
 
-Three progressive demos showing multi-agent system design using [Google's Agent Development Kit (ADK)](https://google.github.io/adk-docs/).
+A Google ADK agent that answers company policy questions from my own
+retrieval service, with citations, and opens a ticket when the documents do
+not cover the question.
 
-| Demo | What it shows | Protocol |
-|------|--------------|----------|
-| **Demo 1** — Routing | Router agent delegates to billing, technical, and escalation specialists | Local tools |
-| **Demo 2** — MCP | Agent queries a live Supabase database; tools are auto-discovered at runtime | MCP |
-| **Demo 3** — Full System | Combines routing + MCP + A2A with a remote shipping agent | MCP + A2A |
-| **Streamlit App** | Interactive UI that runs all three demos in the browser | All |
+Built for Session 3 of the AI Engineering Bootcamp, on top of the `/ask`
+RAG service I built in Sessions 1 and 2 ([ask-api](https://github.com/ChiaraQui/ask-api)).
 
-## Prerequisites
+## The job in one sentence
 
-- **Python 3.12+** (required — earlier versions have asyncio incompatibilities with MCP)
-- **Node.js / npm** (needed by the Supabase MCP server, launched via `npx`)
-- A **Google API key** for Gemini models → [Get one here](https://aistudio.google.com/apikey)
-- A **Supabase project** with a Personal Access Token → [Generate here](https://supabase.com/dashboard/account/tokens) *(Demos 2 & 3 only)*
+When an employee asks a policy question, the agent answers it with document
+citations, or opens a ticket when the documents do not cover it, using my
+ask-api retrieval endpoint as its tool.
 
-## Setup
+## Is this an agent or a workflow?
 
-### 1. Create and activate a virtual environment
+An agent. The number of searches is not decided in advance. The agent reads
+the passages and their scores, judges whether they answer the question, and
+then answers, searches again with different wording, or escalates. That
+branch depends on a tool result, so it cannot be hard-coded.
 
-**With [uv](https://docs.astral.sh/uv/) (recommended):**
+A fixed search-then-answer chain would be a workflow, and it would have no
+way to handle a question the documents do not cover.
 
-```bash
-uv venv
-source .venv/bin/activate   # macOS / Linux
-# .venv\Scripts\activate    # Windows
-uv pip install -e .
-```
+There is no router. The sample's Demo 1 routes between billing, technical
+and escalation specialists because those roles are genuinely separate. This
+job has one role, so a router would have nothing to decide.
 
-**With plain pip:**
+## The one real tool
+
+`search_policy_docs` calls `GET /debug/retrieve` on the live ask-api service
+and returns the retrieved chunks with their scores and `document_id`s. No
+hardcoded data.
+
+I used `/debug/retrieve` rather than `/ask` on purpose. It returns raw chunks
+without calling an LLM, so the reasoning happens in the ADK agent where the
+trace can show it, instead of being hidden inside the Session 2 service.
+
+Tool failures come back as observations, not exceptions. The function catches
+timeouts, HTTP errors, unreachable hosts and non-JSON responses, and returns
+a dict with `error`, `detail` and `recoverable`. The model reads that and
+decides whether to retry or escalate.
+
+The second tool, `create_support_ticket`, is still a placeholder that returns
+a canned dict.
+
+## Bounding the loop
+
+`RunConfig(max_llm_calls=10)` caps the loop. It fails closed: when the cap is
+hit, any partial answer is discarded and `ask()` returns `stopped=True` with
+a refusal telling the employee to escalate. A half-finished answer from an
+agent that had not finished checking its sources is worse than no answer.
+
+## Running it
+
+You need a Google API key and a reachable ask-api deployment. The agent calls
+that service over HTTP, so this repo cannot run on its own.
 
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate   # macOS / Linux
-# .venv\Scripts\activate    # Windows
+source .venv/bin/activate
 pip install -e .
-```
-
-### 2. Configure environment variables
-
-```bash
 cp .env.example .env
 ```
 
-Edit `.env` and fill in your keys:
-
-```
-GOOGLE_API_KEY=your_google_api_key_here
-SUPABASE_ACCESS_TOKEN=your_personal_access_token_here
-SUPABASE_PROJECT_REF=your_project_ref_here
-```
-
-## Running the demos
-
-### Demo 1 — Multi-Agent Routing (local tools only)
+Set `GOOGLE_API_KEY` and point `ASK_API_URL` at your own deployment, then:
 
 ```bash
-python demo1_routing.py
+python policy_agent.py          # three scenarios, trace printed to stdout
+streamlit run streamlit_app.py  # browser UI, "Policy Agent (my build)"
 ```
 
-### Demo 2 — MCP + Supabase
+The Streamlit page shows each step labelled ACT, OBSERVE, THINK or STOP, and
+the final answer below.
 
-Requires `SUPABASE_ACCESS_TOKEN` and `SUPABASE_PROJECT_REF` in `.env`.
+Two things worth knowing. The Gemini free tier allows 20 requests per day per
+model, which is roughly ten questions, so `GEMINI_MODEL` in `.env` is there to
+switch models when you run out. Render's free tier sleeps, so the first search
+of the day can take around 50 seconds. The tool has a 90 second timeout.
+
+## The course sample
+
+`demo1_routing.py`, `demo2_mcp.py`, `demo3_full_system.py`,
+`shipping_agent.py` and `week3_notebook.ipynb` come from the course sample
+repo ([akshika47/AI-Internship](https://github.com/akshika47/AI-Internship/tree/main/ai-engineering-bootcamp/adk-multi-agent-systems)).
+They are kept here for reference, with the fixes needed to make them run. The
+commit history separates the sample, those fixes, and my own work.
+
+`streamlit_app.py` is the sample's app with my agent added as a page.
+
+| Demo | What it shows | Protocol |
+|------|--------------|----------|
+| Demo 1 | Router agent delegates to billing, technical and escalation specialists | Local tools |
+| Demo 2 | Agent queries a Supabase database, tools auto-discovered at runtime | MCP |
+| Demo 3 | Routing and MCP plus A2A to a remote shipping agent | MCP + A2A |
+
+Demos 2 and 3 need Supabase credentials. Demo 3 also needs the shipping agent
+running:
 
 ```bash
-python demo2_mcp.py
-```
-
-### Demo 3 — Full System (Routing + MCP + A2A)
-
-Start the shipping agent in one terminal, then run the demo in another:
-
-```bash
-# Terminal 1 — start the A2A shipping agent
 uvicorn shipping_agent:app --port 8001
-
-# Terminal 2 — run the demo
-python demo3_full_system.py
 ```
-
-### Streamlit App (interactive UI for all demos)
-
-```bash
-# Terminal 1 — start the A2A shipping agent (needed for Demo 3)
-uvicorn shipping_agent:app --port 8001
-
-# Terminal 2 — launch the Streamlit app
-streamlit run streamlit_app.py
-```
-
-## Architecture
-
-```
-User Query
-    │
-    ▼
-┌───────────────────────┐
-│     Router Agent       │
-├───────┬───────┬───────┤
-│       │       │       │
-▼       ▼       ▼       │
-Billing  Tech  Shipping │
-│       │       │       │
-▼       ▼       ▼       │
-MCP    Local    A2A     │
-Server  Tools  Protocol │
-│               │       │
-▼               ▼       │
-Supabase     Remote     │
-  DB         Agent      │
-└───────────────────────┘
-```
-
