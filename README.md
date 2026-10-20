@@ -5,13 +5,13 @@ retrieval service, with citations, and opens a ticket when the documents do
 not cover the question.
 
 Built for Session 3 of the AI Engineering Bootcamp, on top of the `/ask`
-RAG service I built in Sessions 1 and 2 ([ask-api](https://github.com/ChiaraQui/ask-api)).
+RAG service I built in Sessions 1 and 2 ([ask-rag](https://github.com/ChiaraQui/ask-rag)).
 
 ## The job in one sentence
 
 When an employee asks a policy question, the agent answers it with document
 citations, or opens a ticket when the documents do not cover it, using my
-ask-api retrieval endpoint as its tool.
+ask-rag retrieval endpoint as its tool.
 
 ## Is this an agent or a workflow?
 
@@ -29,7 +29,7 @@ job has one role, so a router would have nothing to decide.
 
 ## The one real tool
 
-`search_policy_docs` calls `GET /debug/retrieve` on the live ask-api service
+`search_policy_docs` calls `GET /debug/retrieve` on the live ask-rag service
 and returns the retrieved chunks with their scores and `document_id`s. No
 hardcoded data.
 
@@ -54,7 +54,7 @@ agent that had not finished checking its sources is worse than no answer.
 
 ## Running it
 
-You need a Google API key and a reachable ask-api deployment. The agent calls
+You need a Google API key and a reachable ask-rag deployment. The agent calls
 that service over HTTP, so this repo cannot run on its own.
 
 ```bash
