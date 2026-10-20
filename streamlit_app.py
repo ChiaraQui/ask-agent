@@ -28,7 +28,7 @@ from google.adk.runners import Runner
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
-MODEL = "gemini-2.5-flash"
+MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
 
 # --- Tools ---
 
@@ -228,7 +228,14 @@ with st.sidebar:
         st.success("Shipping Agent (:8001)")
     else:
         st.warning("Shipping Agent -- not running")
-    if langfuse.auth_check():
+    # auth_check() raises UnauthorizedError when credentials are wrong or half
+    # set (host present, keys empty), rather than returning False. Tracing is
+    # optional, so a failure here must never take the whole page down.
+    try:
+        langfuse_ok = langfuse.auth_check()
+    except Exception:
+        langfuse_ok = False
+    if langfuse_ok:
         st.success("Langfuse Tracing")
     else:
         st.warning("Langfuse -- not connected")

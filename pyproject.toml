@@ -5,11 +5,22 @@ description = "Multi-agent AI systems with Google ADK — routing, MCP, and A2A 
 requires-python = ">=3.12"
 
 dependencies = [
-    "google-adk>=1.0.0",
+    "google-adk[mcp,a2a]>=1.0.0",
     "google-genai>=1.0.0",
     "python-dotenv>=1.0.0",
     "a2a-sdk>=0.2.0",
     "uvicorn>=0.30.0",
     "streamlit>=1.35.0",
+    "requests>=2.31.0",
+    "langfuse>=3.0.0",
+    "openinference-instrumentation-google-adk>=0.1.0",
 ]
 
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+# Flat layout: these are standalone scripts, not an importable package.
+# Declaring no modules stops setuptools auto-discovery from erroring out.
+[tool.setuptools]
+py-modules = []
